@@ -10,7 +10,10 @@ on:
   schedule:
     # 19:00 UTC = 03:00 Manila / UTC+8. Operator wants fresh data ready
     # by morning local time without competing with their early-morning
-    # email-triage window.
+    # email-triage window. GitHub may delay by 30-120 min during high load
+    # (documented best-effort behaviour); a 03:00 cron commonly lands by
+    # 04:00-05:00 PHT. Re-pushed 2026-06-22 to re-register the schedule
+    # after an orphan-branch history rewrite de-registered it.
     - cron: "0 19 * * *"
   workflow_dispatch:
     inputs:
