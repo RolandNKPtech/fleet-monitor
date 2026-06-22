@@ -460,10 +460,20 @@ def _needs_attention(snapshot: dict) -> str:
     if shown:
         items = []
         for a in shown:
+            sk = a["site_key"]
+            # Fleet-level alerts (e.g. analytics_token_failure) use site_key="fleet"
+            # and have no per-site page — keep them as plain text. Real sites get
+            # wrapped so the operator can click straight into the site's detail.
+            if sk and sk != "fleet":
+                site_html = (f'<a class="alert-site" '
+                             f'href="sites/{_safe_key(sk)}.html">'
+                             f'{_esc(sk)}</a>')
+            else:
+                site_html = f'<span class="alert-site">{_esc(sk or "fleet")}</span>'
             items.append(
                 f'<li class="alert sev-{_esc(a["severity"])}">'
                 f'<span class="sev-pill sev-{_esc(a["severity"])}">{_esc(a["severity"])}</span>'
-                f'<span class="alert-site">{_esc(a["site_key"])}</span>'
+                f'{site_html}'
                 f'<span class="alert-rule">{_esc(a["rule"])}</span>'
                 f'<span class="alert-summary">{_esc(a["summary"])}</span></li>')
         body = f'<ul class="alert-list">{"".join(items)}</ul>'
@@ -1765,7 +1775,8 @@ main.shell{padding:18px 28px 56px;max-width:1280px;margin:0 auto}
 tr.r2h-bad td{background:#fff5f5}
 tr.r2h-warn td{background:#fafafa}
 tr.r2h-ok td{background:#f7fdf9}
-.alert-site{font-weight:600;color:var(--ink)}
+.alert-site{font-weight:600;color:var(--ink);text-decoration:none}
+a.alert-site:hover{text-decoration:underline;cursor:pointer}
 .alert-rule{color:var(--muted);font-family:var(--font-mono);font-size:11.5px}
 .alert-summary{color:var(--ink-2)}
 .alert-more{padding-left:10px;margin:6px 0 0;font-size:12.5px}
