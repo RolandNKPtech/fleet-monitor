@@ -25,7 +25,7 @@ from datetime import date as _date
 
 from .cycle import cycle_window, cycle_to_date_gb, cycle_to_date_visits
 from .models import SNAPSHOTS_DIR, DASHBOARD_FILE, CONSOLE_FILE, SEVERITY_ORDER
-from .plan_config import AccountPlan, account_is_configured, load_plans
+from .plan_config import AccountPlan, account_is_configured, load_plans, primary_lookup_name
 from .plan_utilization import count_data_days, MIN_PROJECTION_DAYS
 from .timeseries import read_all, read_daily_all
 from .render_console import render_console
@@ -567,14 +567,36 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
                 '<code>config/wpe-plans.yml</code> to enable cycle-aware utilization.'
                 '</p></section>')
 
-    # Union of account names from plans + roster.
-    all_accounts = sorted(set(plans.keys()) | set(rolling_by_account.keys()))
+    # Collapse the (display_label, real_account_names) graph so one card is
+    # rendered per *plan*, even when the YAML aliases multiple real WPE names
+    # onto a sanitized label. Real WPE names that have no plan entry surface
+    # under their own raw name so unconfigured accounts still show rolling
+    # consumption.
+    # When a plan was constructed directly (e.g. in unit tests), display_label
+    # is empty — fall back to the dict key so each plan still maps to a
+    # distinct card.
+    plans_by_label: dict[str, AccountPlan] = {}
+    label_of_key: dict[str, str] = {}
+    for k, p in plans.items():
+        label = p.display_label or k
+        label_of_key[k] = label
+        plans_by_label.setdefault(label, p)
+    rolling_by_label: dict[str, float] = {}
+    for raw, bw in rolling_by_account.items():
+        label = label_of_key.get(raw, raw)
+        rolling_by_label[label] = rolling_by_label.get(label, 0) + bw
+
+    all_accounts = sorted(set(plans_by_label.keys()) | set(rolling_by_label.keys()))
     rows = []
     summary_critical = summary_warning = summary_unconfigured = 0
 
     for account in all_accounts:
-        plan = plans.get(account) or AccountPlan()
-        rolling = rolling_by_account.get(account)
+        plan = plans_by_label.get(account) or AccountPlan(display_label=account)
+        rolling = rolling_by_label.get(account)
+        # The snapshot/daily rows are keyed by the real WPE account name. When
+        # the YAML aliases this label, route the data lookup through the real
+        # name; otherwise the label IS the real name (back-compat).
+        lookup = primary_lookup_name(plan) if plan.real_account_names else account
 
         if not account_is_configured(plan):
             summary_unconfigured += 1
@@ -603,14 +625,14 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
         # Configured — do the cycle math.
         cycle_start, cycle_end, day_n, cycle_length = cycle_window(
             today, plan.cycle_start_day)
-        used_gb = cycle_to_date_gb(account, daily_rows, cycle_start, today)
+        used_gb = cycle_to_date_gb(lookup, daily_rows, cycle_start, today)
         limit = float(plan.bandwidth_gb_limit)
         pct_used = (used_gb / limit) * 100 if limit > 0 else 0
         # Projection denominator MUST match plan_utilization._eval_axis or
         # the alert engine and the dashboard will disagree on whether an
         # account is on track to bust its plan. Both use observed data_days
         # (not calendar day_n) and require MIN_PROJECTION_DAYS observations.
-        data_days = count_data_days(account, daily_rows, cycle_start, today)
+        data_days = count_data_days(lookup, daily_rows, cycle_start, today)
         projection_active = data_days >= MIN_PROJECTION_DAYS
         projected = (used_gb / data_days) * cycle_length if projection_active else 0.0
         projected_pct = (projected / limit) * 100 if projection_active and limit > 0 else 0.0

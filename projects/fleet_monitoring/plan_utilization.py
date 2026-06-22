@@ -15,7 +15,7 @@ from datetime import date
 
 from .cycle import cycle_window, cycle_to_date_gb, cycle_to_date_visits
 from .models import Alert, SEVERITY_CRITICAL, SEVERITY_WARNING
-from .plan_config import AccountPlan, account_is_configured
+from .plan_config import AccountPlan, account_is_configured, primary_lookup_name
 
 RULE_ID = "plan_utilization"
 WARN_PCT = 80.0
@@ -111,15 +111,28 @@ def evaluate_plan_utilization(today: date,
     can carry distinct severities and fingerprints).
     """
     alerts: list[Alert] = []
-    for account, plan in plans.items():
+    # Dedupe — `plans` registers the same AccountPlan under both its display
+    # label and every real_account_name alias, so plans.items() would visit
+    # the same plan up to N+1 times and emit duplicate alerts.
+    seen_ids: set[int] = set()
+    for key, plan in plans.items():
+        if id(plan) in seen_ids:
+            continue
+        seen_ids.add(id(plan))
         if not account_is_configured(plan):
             continue
+        # Display label is what shows in the alert + dashboard; lookup is the
+        # real WPE account name that joins to daily_rows. Falls back to the
+        # dict key for plans constructed directly (no load_plans() metadata —
+        # the case every unit test exercises).
+        account = plan.display_label or key
+        lookup = primary_lookup_name(plan) if plan.real_account_names else key
         cycle_start, cycle_end, day_n, cycle_length = cycle_window(
             today, plan.cycle_start_day)
 
-        data_days = count_data_days(account, daily_rows, cycle_start, today)
+        data_days = count_data_days(lookup, daily_rows, cycle_start, today)
 
-        used_gb = cycle_to_date_gb(account, daily_rows, cycle_start, today)
+        used_gb = cycle_to_date_gb(lookup, daily_rows, cycle_start, today)
         bw_alert = _eval_axis(account, plan, "bandwidth",
                               used_gb, plan.bandwidth_gb_limit,
                               day_n, cycle_length, data_days)
@@ -128,7 +141,7 @@ def evaluate_plan_utilization(today: date,
 
         if plan.visits_limit is not None:
             used_visits = cycle_to_date_visits(
-                account, daily_rows, cycle_start, today)
+                lookup, daily_rows, cycle_start, today)
             v_alert = _eval_axis(account, plan, "visits",
                                  used_visits, plan.visits_limit,
                                  day_n, cycle_length, data_days)

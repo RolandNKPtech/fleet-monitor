@@ -99,3 +99,23 @@ def test_visits_axis_emits_distinct_alert():
     assert all(a.severity == "critical" for a in alerts)
     # Distinct fingerprints so lifecycle tracks them separately.
     assert alerts[0].fingerprint() != alerts[1].fingerprint()
+
+
+def test_aliased_plan_emits_one_alert_per_axis_not_per_alias_key():
+    """When load_plans() registers a plan under multiple keys (alias + real
+    name), evaluate_plan_utilization must dedupe by plan identity. Otherwise
+    a 2-alias plan would fire 2 bandwidth alerts on the same cycle.
+
+    Bug guard — this is the exact misfire that would happen if the analyzer
+    iterated plans.items() naively after the alias refactor."""
+    plan = AccountPlan(cycle_start_day=13, bandwidth_gb_limit=100,
+                       display_label="acctA",
+                       real_account_names=["realacct"])
+    # Same plan registered under both keys, as load_plans() does.
+    plans = {"acctA": plan, "realacct": plan}
+    # Daily data is keyed by the REAL WPE account name.
+    daily = [_daily("realacct", "2026-05-13", 95_000_000_000)]
+    alerts = evaluate_plan_utilization(date(2026, 5, 19), plans, daily)
+    assert len(alerts) == 1
+    assert alerts[0].site_key == "acctA"  # display label, not the real name
+    assert alerts[0].severity == "critical"

@@ -14,11 +14,46 @@
 #   visits_limit         Billable visits allowed per cycle
 #   overage_per_gb_usd   Your contracted overage rate, $ per GB over the cap.
 #                        Only used for the optional cost label.
+#   real_account_names   Optional list of WPE-API account names to merge
+#                        under this display label. Required when the YAML
+#                        key is a sanitized alias (e.g. `acctA`) that does
+#                        not match the snapshot's `wpe.account_name` field.
+#                        When omitted, the YAML key IS the real name.
 
 accounts:
-  acctA: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
-  acctB: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
-  acctC: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
-  acctD: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
-  acctE: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
-  acctF: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
+  acctA:
+    real_account_names: [nkpmedical1]
+    cycle_start_day: null
+    bandwidth_gb_limit: null
+    visits_limit: null
+    overage_per_gb_usd: null
+  acctB:
+    real_account_names: [nkpmedical2]
+    cycle_start_day: null
+    bandwidth_gb_limit: null
+    visits_limit: null
+    overage_per_gb_usd: null
+  acctC:
+    real_account_names: [nkpmedical3]
+    cycle_start_day: null
+    bandwidth_gb_limit: null
+    visits_limit: null
+    overage_per_gb_usd: null
+  acctD:
+    real_account_names: [nkpmedical4]
+    cycle_start_day: null
+    bandwidth_gb_limit: null
+    visits_limit: null
+    overage_per_gb_usd: null
+  acctE:
+    real_account_names: [nkpmedical5]
+    cycle_start_day: null
+    bandwidth_gb_limit: null
+    visits_limit: null
+    overage_per_gb_usd: null
+  acctF:
+    real_account_names: [nkpmedical6]
+    cycle_start_day: null
+    bandwidth_gb_limit: null
+    visits_limit: null
+    overage_per_gb_usd: null
