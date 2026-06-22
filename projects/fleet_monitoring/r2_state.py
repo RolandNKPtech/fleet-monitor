@@ -65,6 +65,11 @@ _INVENTORY: tuple[tuple[Path, str, str], ...] = (
     (DATA_DIR / "roster.json", "fleet/roster.json", "file"),
     (DATA_DIR / "fleet.db", "fleet/fleet.db", "file"),
     (ROOT / "data" / "analytics", "lake/analytics", "dir"),
+    # R2 health scan output. Local cron runs scripts/monitor_r2_health.py
+    # daily; that script calls push_one() to upload immediately, but this
+    # inventory entry ensures the dashboard pipeline also round-trips the
+    # files (so a render-only run on a fresh GHA runner still has data).
+    (ROOT / "data" / "reports" / "r2-health", "fleet/r2-health", "dir"),
 )
 
 # OAuth token bundle is OUTSIDE the project dir today — kept in
@@ -118,6 +123,26 @@ def _put_file(client, bucket: str, key: str, path: Path) -> None:
     """Upload one file to R2 at `key`. Atomic at the object layer."""
     with path.open("rb") as fh:
         client.put_object(Bucket=bucket, Key=key, Body=fh)
+
+
+def push_one(local_path: Path, remote_key: str) -> bool:
+    """Push a single local file to R2 at `remote_key`. Returns True on success.
+
+    Returns False (silently) when R2 env is unset, the local file is missing,
+    or the upload errors out. Designed for one-off uploaders that want to
+    publish a fresh artifact (e.g. monitor_r2_health.py pushing its scan JSON)
+    without invoking the full pipeline inventory walk.
+    """
+    cfg = _r2_config()
+    if cfg is None or not local_path.exists():
+        return False
+    try:
+        client = _client(cfg)
+        _put_file(client, cfg["bucket"], remote_key, local_path)
+        return True
+    except Exception as e:  # pragma: no cover - boto3 surface area
+        print(f"R2 push failed for {remote_key}: {e}", file=sys.stderr)
+        return False
 
 
 def _get_file(client, bucket: str, key: str, dest: Path) -> bool:

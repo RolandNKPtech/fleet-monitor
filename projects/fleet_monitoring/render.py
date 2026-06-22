@@ -1257,6 +1257,139 @@ def _interventions_tab(view: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# R2 Health tab — read scripts/monitor_r2_health.py's daily JSON output and
+# render a table of every R2-offloaded site with broken-thumb count + status.
+# Data is produced by a LOCAL cron (scanner needs WPE SSH) and pushed to R2
+# by that script; pull_from_r2() restores it into the data tree, so the
+# render here is a pure read of the local JSON file. See r2_state inventory.
+# ---------------------------------------------------------------------------
+
+
+def _r2_health_load() -> dict | None:
+    """Read data/reports/r2-health/latest.json. Returns None if missing."""
+    from .models import ROOT
+    path = ROOT / "data" / "reports" / "r2-health" / "latest.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _r2_health_status(result: dict) -> str:
+    """Classify a per-site result into the operator-facing status label.
+
+    Mirrors sync_r2_health_to_sheet.py's derivation so the dashboard and the
+    Google Sheet show the same label for the same site:
+      - broken_count > 0 -> needs_resync
+      - probed == 0      -> no_recent_upload
+      - else             -> clean
+    Scanner failures (status != "ok") surface as scan_failed.
+    """
+    if result.get("status") != "ok":
+        return "scan_failed"
+    if result.get("broken_count", 0) > 0:
+        return "needs_resync"
+    if result.get("probed", 0) == 0:
+        return "no_recent_upload"
+    return "clean"
+
+
+_R2_HEALTH_CSS_CLASS = {
+    "needs_resync": "r2h-bad",
+    "scan_failed": "r2h-bad",
+    "no_recent_upload": "r2h-warn",
+    "clean": "r2h-ok",
+}
+
+
+def _r2_health_tab(payload: dict | None) -> str:
+    """The R2 Health tab — per-site offload health from the daily scanner."""
+    if not payload:
+        return ('<section class="panel"><div class="panel-head">'
+                '<h2>R2 Health</h2></div>'
+                '<p class="muted">No R2 health scan available yet. Run '
+                '<code>python scripts/monitor_r2_health.py</code> locally; '
+                'it pushes the result to R2 and this tab will populate on '
+                'the next dashboard render.</p></section>')
+
+    results = payload.get("results") or []
+    totals = payload.get("totals") or {}
+    scan_date = payload.get("date") or "unknown"
+    days_window = payload.get("days_window", 30)
+
+    # Sort: broken first, then no_recent_upload, then clean — most actionable
+    # rows on top regardless of alphabetical apex.
+    def _sort_key(r: dict):
+        status = _r2_health_status(r)
+        order = {"needs_resync": 0, "scan_failed": 1,
+                 "no_recent_upload": 2, "clean": 3}.get(status, 4)
+        return (order, -(r.get("broken_count") or 0), r.get("apex") or "")
+
+    rows_html = []
+    for r in sorted(results, key=_sort_key):
+        status = _r2_health_status(r)
+        cls = _R2_HEALTH_CSS_CLASS.get(status, "")
+        broken_ids = ", ".join(str(i) for i in (r.get("broken_ids") or [])[:5])
+        if len(r.get("broken_ids") or []) > 5:
+            broken_ids += f" +{len(r['broken_ids']) - 5}"
+        broken_pct = ""
+        probed = r.get("probed", 0)
+        if probed > 0 and r.get("broken_count", 0) > 0:
+            broken_pct = f"{(r['broken_count'] / probed) * 100:.0f}%"
+        rows_html.append(
+            f'<tr class="{cls}">'
+            f'<td class="site">{_esc(r.get("apex", "—"))}</td>'
+            f'<td>{_esc(r.get("install", "—"))}</td>'
+            f'<td>{_esc(r.get("source", "—"))}</td>'
+            f'<td class="num">{_esc(r.get("probed", 0))}</td>'
+            f'<td class="num">{_esc(r.get("broken_count", 0))}</td>'
+            f'<td class="num">{_esc(broken_pct or "—")}</td>'
+            f'<td><span class="sev-pill r2h-{status}">{_esc(status)}</span></td>'
+            f'<td class="muted">{_esc(broken_ids or "—")}</td>'
+            f'</tr>')
+
+    sites_with_broken = totals.get("sites_with_broken", 0)
+    summary_pill = (
+        f'<span class="pill r2h-bad-pill">{sites_with_broken} sites need resync</span>'
+        if sites_with_broken else
+        '<span class="pill r2h-ok-pill">All offloaded sites clean</span>')
+
+    return f"""
+    <section class="panel">
+      <div class="panel-head">
+        <h2>R2 Health &mdash; offloaded sites</h2>
+        {summary_pill}
+      </div>
+      <p class="muted">
+        {totals.get("sites_scanned", len(results))} sites scanned &middot;
+        {totals.get("total_probed", 0)} URLs probed &middot;
+        {totals.get("total_broken", 0)} broken across
+        {sites_with_broken} site(s) &middot;
+        last scan <strong>{_esc(scan_date)}</strong>
+        (window: last {_esc(days_window)} days)
+      </p>
+      <div class="table-wrap">
+      <table id="r2-health-table"><thead><tr>
+        <th>Apex</th><th>Install</th><th>Source</th>
+        <th class="num">Probed ({_esc(days_window)}d)</th>
+        <th class="num">Broken</th>
+        <th class="num">Broken %</th>
+        <th>Status</th>
+        <th>Broken IDs (first 5)</th>
+      </tr></thead><tbody>{"".join(rows_html)}</tbody></table>
+      </div>
+      <p class="muted">
+        Source: <code>scripts/monitor_r2_health.py</code> (server-side PHP scan
+        of recent image attachments via WPE SSH, run daily and pushed to R2 at
+        <code>fleet/r2-health/latest.json</code>). To resync a site, run
+        <code>python scripts/fix_r2_broken_fleet.py --site &lt;apex&gt;</code>.
+      </p>
+    </section>"""
+
+
+# ---------------------------------------------------------------------------
 # Changelog tab
 # ---------------------------------------------------------------------------
 
@@ -1621,6 +1754,17 @@ main.shell{padding:18px 28px 56px;max-width:1280px;margin:0 auto}
 .sev-pill.sev-critical{background:var(--crit)}
 .sev-pill.sev-warning{background:var(--warn)}
 .sev-pill.sev-info{background:var(--info)}
+.sev-pill.r2h-needs_resync{background:var(--crit)}
+.sev-pill.r2h-scan_failed{background:#7a5a05}
+.sev-pill.r2h-no_recent_upload{background:#9ca3af;color:#1f2937}
+.sev-pill.r2h-clean{background:#16a34a}
+.pill.r2h-bad-pill{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;
+  padding:4px 11px;border-radius:999px;font-weight:600;font-size:12px}
+.pill.r2h-ok-pill{background:#dcfce7;color:#166534;border:1px solid #bbf7d0;
+  padding:4px 11px;border-radius:999px;font-weight:600;font-size:12px}
+tr.r2h-bad td{background:#fff5f5}
+tr.r2h-warn td{background:#fafafa}
+tr.r2h-ok td{background:#f7fdf9}
 .alert-site{font-weight:600;color:var(--ink)}
 .alert-rule{color:var(--muted);font-family:var(--font-mono);font-size:11.5px}
 .alert-summary{color:var(--ink-2)}
@@ -1999,6 +2143,7 @@ def render_html(snapshot: dict, timeseries_rows: list[dict],
     <button onclick="showTab(2,this)">Trends</button>
     <button onclick="showTab(3,this)">Changelog</button>
     <button onclick="showTab(4,this)">Interventions</button>
+    <button onclick="showTab(5,this)">R2 Health</button>
     <a class="console-link" href="console.html">Console &rarr;</a>
   </nav>
   <div class="topbar-right">
@@ -2032,6 +2177,7 @@ def render_html(snapshot: dict, timeseries_rows: list[dict],
   <div class="tab">{_trends_tab(timeseries_rows)}</div>
   <div class="tab">{_changelog_tab(snapshot)}</div>
   <div class="tab">{_interventions_tab(interventions_view or {"needs_review": 0, "rows": []})}</div>
+  <div class="tab">{_r2_health_tab(_r2_health_load())}</div>
 </main>
 
 <script>{_JS}</script>
