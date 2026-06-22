@@ -607,7 +607,7 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
             rows.append(f"""
             <div class="plan-row plan-row-unset">
               <div class="plan-row-head">
-                <span class="plan-account">{_esc(account)}</span>
+                <span class="plan-account">{_esc(lookup)}</span>
                 <span class="plan-state muted">plan limit not set</span>
               </div>
               <div class="plan-row-body">
@@ -678,7 +678,7 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
         rows.append(f"""
         <div class="plan-row {sev_cls}">
           <div class="plan-row-head">
-            <span class="plan-account">{_esc(account)}</span>
+            <span class="plan-account">{_esc(lookup)}</span>
             <span class="plan-state">{head_state}</span>
           </div>
           <div class="plan-bar-track">

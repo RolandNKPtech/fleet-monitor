@@ -50,6 +50,32 @@ def test_panel_renders_with_zero_accounts_configured():
     assert "wpe-plans.yml" in html.lower() or "configure" in html.lower()
 
 
+def test_panel_shows_real_account_name_not_sanitized_alias():
+    """An aliased plan (acctA -> realacct) must render the REAL WPE
+    account name as the card title. The alias exists only to keep the
+    public source repo client-free; operators need the real name on the
+    rendered dashboard so they can match a card to the actual WPE billing
+    portal / SSH host.
+
+    Regression guard: this is exactly the "what server is acctA?" confusion
+    the operator hit on the live dashboard."""
+    plan = AccountPlan(display_label="acctA",
+                       real_account_names=["realacct"])
+    # Same plan registered under both keys, as load_plans() does.
+    plans = {"acctA": plan, "realacct": plan}
+    html = _plan_utilization_panel(today=date(2026, 5, 19),
+                                   plans=plans, daily_rows=[],
+                                   snapshot={"sites": [
+                                       {"wpe": {"account_name": "realacct",
+                                                "bandwidth_gb_30d": 674.0}}]})
+    # The real name appears in the card title.
+    assert ">realacct<" in html
+    # The sanitized alias must NOT appear as a card title.
+    assert ">acctA<" not in html
+    # The current 30-day rolling still shows (rolling-by-account join uses alias).
+    assert "674" in html
+
+
 def test_panel_includes_cost_line_when_overage_rate_configured_and_overage_positive():
     plans = {"x": AccountPlan(cycle_start_day=13, bandwidth_gb_limit=100,
                                overage_per_gb_usd=0.30)}
