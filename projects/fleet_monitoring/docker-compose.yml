@@ -1,0 +1,58 @@
+# Fleet Monitoring Dashboard — local + server-ready compose stack.
+#
+# Usage (from the repo root):
+#   docker compose -f projects/fleet_monitoring/docker-compose.yml up -d --build
+#   docker compose -f projects/fleet_monitoring/docker-compose.yml logs -f
+#   docker compose -f projects/fleet_monitoring/docker-compose.yml down
+#
+# Open http://localhost:8765/ once the dashboard service is up. The cron
+# sidecar fires the pipeline once a day at $DAILY_RUN_TIME (UTC, default
+# 22:00 = 06:00 in Manila / UTC+8).
+
+services:
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: projects/fleet_monitoring/Dockerfile
+    image: nkp-fleet-monitoring:latest
+    container_name: fleet-monitoring-dashboard
+    ports:
+      - "8765:8765"
+    env_file:
+      - ../../.env
+    volumes:
+      # Persistent state — snapshots, timeseries, dashboard.html, run logs.
+      - ../../projects/fleet_monitoring/data:/app/projects/fleet_monitoring/data
+      # Analytics lake (GA4 + GSC parquet store) — shared with host so
+      # in-container pulls update the same files host-side cron uses.
+      - ../../data/analytics:/app/data/analytics
+      # GA4/GSC OAuth refresh tokens.
+      - ../../builds-reference/cloudflare-project/sites/GA4/alltoken.json:/app/builds-reference/cloudflare-project/sites/GA4/alltoken.json
+      # Source bind-mounts so code changes land on the next `up -d` without
+      # a full rebuild. Trade-off: container always runs whatever the host's
+      # working tree looks like — convenient in dev, fragile if you sometimes
+      # work on a stale branch. Remove these mounts if running in prod.
+      - ../../projects/fleet_monitoring:/app/projects/fleet_monitoring
+      - ../../skills:/app/skills
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+  cron:
+    image: nkp-fleet-monitoring:latest
+    container_name: fleet-monitoring-cron
+    depends_on:
+      - dashboard
+    env_file:
+      - ../../.env
+    volumes:
+      - ../../projects/fleet_monitoring/data:/app/projects/fleet_monitoring/data
+      - ../../data/analytics:/app/data/analytics
+      - ../../builds-reference/cloudflare-project/sites/GA4/alltoken.json:/app/builds-reference/cloudflare-project/sites/GA4/alltoken.json
+      - ../../projects/fleet_monitoring:/app/projects/fleet_monitoring
+      - ../../skills:/app/skills
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DAILY_RUN_TIME: "22:00"  # UTC = 06:00 Manila (UTC+8)
+    command: ["python", "-m", "projects.fleet_monitoring.cron"]

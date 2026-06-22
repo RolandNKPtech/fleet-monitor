@@ -1,0 +1,16 @@
+# projects/fleet_monitoring/config/alerts-mute.yml
+# Hand-edited mute list. Same pattern as fixed-sites.yml.
+# An alert whose fingerprint matches an entry here is moved to the MUTED
+# state and collapsed in the dashboard.
+#
+# Fields:
+#   fingerprint  Exact alert fingerprint (site:rule:hash) OR a "site:rule" prefix
+#                to mute every alert of that rule for that site.
+#   reason       Why it is muted (required — future-you needs this).
+#   muted_by     Who muted it.
+#   expires      ISO date (YYYY-MM-DD) when the mute auto-lifts, or null for permanent.
+mutes:
+  - fingerprint: "example-intl-client.com:config_drift"
+    reason: "Intentionally has no country challenge — Latin American audience. Permanent."
+    muted_by: roland
+    expires: null

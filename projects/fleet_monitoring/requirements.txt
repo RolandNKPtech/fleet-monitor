@@ -1,0 +1,14 @@
+# Runtime dependencies for the Fleet Monitoring Dashboard image.
+# Pinned to known-good majors; bump as needed.
+httpx>=0.27,<1.0
+tenacity>=8.2,<10.0
+pyyaml>=6.0,<7.0
+python-dotenv>=1.0,<2.0
+# Analytics integration: analytics_map reads parquet meta tables, analytics_pull
+# runs DuckDB queries over the local lake (data/analytics/).
+pyarrow>=15.0,<22.0
+duckdb>=1.0,<2.0
+# R2 state sync — pulls/pushes data/ to a Cloudflare R2 bucket so the
+# pipeline can run on stateless GitHub Actions runners. Uses boto3 against
+# R2's S3-compatible API.
+boto3>=1.34,<2.0

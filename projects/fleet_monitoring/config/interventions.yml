@@ -1,0 +1,9 @@
+# Fleet Monitoring — intervention log.
+# Drafts are auto-appended from CF config drift with status: needs_review.
+# To review a draft: set status to `confirmed` (correct target_metric /
+# applied_date / type if the guess is wrong) or `dismissed` (not a fix).
+# `fingerprint` is the dedup key — never edit it.
+# You may also hand-add a confirmed entry for a fix that drift did not catch.
+#
+# target_metric: bandwidth | mb_per_visit | storage
+interventions:

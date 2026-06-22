@@ -1,0 +1,26 @@
+# Cloudflare Worker config — Fleet Monitor API + serving frontend.
+#
+# Deploy from the worker/ subdirectory:
+#   cd worker && wrangler deploy
+#
+# Secrets (set once via `wrangler secret put NAME` after deploy):
+#   GITHUB_TOKEN  — PAT with actions:write on the fleet-monitor repo
+#
+# Public env vars (set in this file, safe to commit):
+#   GITHUB_OWNER, GITHUB_REPO, GITHUB_WORKFLOW, GITHUB_BRANCH
+
+name = "fleet-monitor-api"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+# R2 binding — pipeline writes here from GHA, Worker reads from here to serve.
+[[r2_buckets]]
+binding = "STATE"
+bucket_name = "fleet-monitor"
+
+# Public (non-secret) env values — actually-secret values use `wrangler secret put`.
+[vars]
+GITHUB_OWNER = "RolandNKPtech"
+GITHUB_REPO = "fleet-monitor"
+GITHUB_WORKFLOW = "pipeline.yml"
+GITHUB_BRANCH = "main"

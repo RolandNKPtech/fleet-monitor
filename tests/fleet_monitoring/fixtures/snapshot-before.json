@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "date": "2026-05-08",
+  "captured_at": "2026-05-08T06:00:00+00:00",
+  "run": {"duration_s": 800, "coverage": {"wpe": "2/2", "cf_config": "2/2"}},
+  "roster_summary": {"total": 2, "wpe+cf": 2, "wpe-only": 0, "cf-only": 0},
+  "sites": [
+    {"key": "calm.com", "apex": "calm.com", "join_state": "wpe+cf",
+     "wpe": {"install": "calmprd", "account": "a1", "bandwidth_gb_30d": 40.0,
+             "origin_gb_30d": 4.0, "cdn_gb_30d": 36.0, "billable_visits_30d": 3000,
+             "total_visits_30d": 9000, "storage_gb": 2.0, "mb_per_visit": 13.3},
+     "cf": {"zone_id": "z1", "config": {"settings": {"ssl": "strict", "min_tls_version": "1.2"},
+            "bot": {"ai_bots_protection": "block"}, "waf_rules": [], "cache_rules": [],
+            "dns_proxy_apex": null, "dns_proxy_www": true}, "analytics": {"requests_30d": 100000,
+            "threats": 50, "cache_hit_rate": 70.0}},
+     "probe": null, "overlay": null},
+    {"key": "spiker.com", "apex": "spiker.com", "join_state": "wpe+cf",
+     "wpe": {"install": "spikerprd", "account": "a1", "bandwidth_gb_30d": 45.0,
+             "origin_gb_30d": 5.0, "cdn_gb_30d": 40.0, "billable_visits_30d": 2000,
+             "total_visits_30d": 8000, "storage_gb": 2.0, "mb_per_visit": 22.5},
+     "cf": {"zone_id": "z2", "config": {"settings": {"ssl": "strict", "min_tls_version": "1.2"},
+            "bot": {"ai_bots_protection": "block"}, "waf_rules": [], "cache_rules": [],
+            "dns_proxy_apex": null, "dns_proxy_www": true}, "analytics": {"requests_30d": 90000,
+            "threats": 40, "cache_hit_rate": 72.0}},
+     "probe": null, "overlay": null}
+  ]
+}

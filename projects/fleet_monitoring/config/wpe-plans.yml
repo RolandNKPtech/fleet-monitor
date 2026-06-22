@@ -1,0 +1,24 @@
+# Fleet Monitoring — WPE plan caps per account.
+#
+# Fill each value from https://my.wpengine.com/account/<account-id>/usage
+# (the "Account" -> "Usage" page in your WPE admin).
+#
+# Any field left as `null` causes the panel to SKIP the dependent
+# computation for that account — it still shows current absolute
+# consumption from the WPE API, just no "% of plan" or "$ overage".
+# Add values as you collect them; partial config is supported.
+#
+# Fields:
+#   cycle_start_day      1-31, day-of-month each billing cycle begins
+#   bandwidth_gb_limit   GB allowed per cycle (matches the WPE Usage page)
+#   visits_limit         Billable visits allowed per cycle
+#   overage_per_gb_usd   Your contracted overage rate, $ per GB over the cap.
+#                        Only used for the optional cost label.
+
+accounts:
+  acctA: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
+  acctB: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
+  acctC: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
+  acctD: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
+  acctE: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}
+  acctF: {cycle_start_day: null, bandwidth_gb_limit: null, visits_limit: null, overage_per_gb_usd: null}

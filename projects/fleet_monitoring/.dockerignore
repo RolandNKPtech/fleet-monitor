@@ -1,0 +1,59 @@
+# .dockerignore lives next to the Dockerfile but applies to the build context
+# (the repo root, since docker-compose.yml sets `context: ../..`). Everything
+# below is excluded from the image to keep it lean.
+**/.git
+**/.gitignore
+**/.gitattributes
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+
+# Dev / IDE / OS
+.vscode/
+.idea/
+.claude/
+.claire/
+.superpowers/
+.wrangler/
+.DS_Store
+Thumbs.db
+
+# Large + unrelated tree
+builds-reference/
+node_modules/
+CF-sites-repo/
+
+# Tests + docs aren't needed at runtime
+tests/
+docs/
+
+# Generated data / artifacts we'll mount as a volume instead
+projects/fleet_monitoring/data/
+projects/fleet_monitoring/dashboard.html
+*.log
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.zip
+collect-*.json
+collect-*.log
+
+# Secrets — mounted via env_file at runtime, never baked in
+.env
+
+# Other unrelated projects in this repo
+projects/ai-bot-blocker/
+projects/cf-image-transform/
+projects/media_offload/
+
+# Old report bloat (the Dockerfile explicitly copies the files it needs)
+data/clients/
+data/state/
+data/baselines/
+data/migrations/
+data/snapshots/
+data/visual-compare/
+data/portfolio-images.csv

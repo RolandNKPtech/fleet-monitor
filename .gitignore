@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Pipeline runtime state — lives in R2, never committed.
+projects/fleet_monitoring/data/
+projects/fleet_monitoring/config/*.local.yml
+
+# Local OAuth tokens — lives in R2, never committed.
+**/alltoken.json
+
+# Worker build artifacts
+worker/node_modules/
+worker/dist/
+worker/.wrangler/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store

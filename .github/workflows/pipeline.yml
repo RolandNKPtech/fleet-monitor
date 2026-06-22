@@ -1,0 +1,106 @@
+name: Fleet pipeline
+
+# Runs the fleet monitoring pipeline daily at 22:00 UTC (06:00 Manila),
+# and on-demand via the Refresh button (workflow_dispatch from the CF
+# Worker). Pulls state from R2, runs collect -> analyze -> render,
+# pushes state back to R2. The Pages site reads the new HTML from R2
+# on the next request.
+
+on:
+  schedule:
+    # 19:00 UTC = 03:00 Manila / UTC+8. Operator wants fresh data ready
+    # by morning local time without competing with their early-morning
+    # email-triage window.
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this manual run was triggered (operator / debug)"
+        required: false
+        default: "manual"
+
+concurrency:
+  # Prevent overlapping runs — a cron firing while an operator Refresh is
+  # still in flight would corrupt the snapshot midway through push_to_r2.
+  group: fleet-pipeline
+  cancel-in-progress: false
+
+permissions:
+  # Default-deny everything; this job doesn't push back to the repo.
+  contents: read
+
+jobs:
+  pipeline:
+    name: collect -> analyze -> render
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # observed: r2_pull (~5-40min) + analytics_pull (up to 30min) +
+                          # collect (~30-50min CF per-site) + analyze/render/push (~5min)
+                          # = up to ~110min on a slow runner. 120 leaves real headroom.
+                          # Daily incrementals still fit in ~30-50min; this ceiling doesn't
+                          # slow them down — only acts as a hard backstop.
+
+    steps:
+      - name: Reason
+        run: echo "Trigger reason= ${{ github.event.inputs.reason || 'scheduled' }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r projects/fleet_monitoring/requirements.txt
+          # Analytics pulls depend on these (kept out of the runtime
+          # requirements file because they're optional for the dashboard
+          # container, but mandatory for the pipeline runner).
+          pip install google-analytics-data google-auth-oauthlib \
+                      google-api-python-client
+
+      - name: Run pipeline
+        env:
+          # ----- R2 sync (r2_state.py reads these directly) -----
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          # ----- Cloudflare (analytics + zone reads) -----
+          CF_API_TOKEN:         ${{ secrets.CF_API_TOKEN }}
+          # ----- WP Engine -----
+          WPE_API_USER:         ${{ secrets.WPE_API_USER }}
+          WPE_API_PASSWORD:     ${{ secrets.WPE_API_PASSWORD }}
+          # ----- Google (GA4 + GSC) -----
+          # alltoken.json is pulled from R2 at pipeline start; these are
+          # the client credentials used to mint new access tokens. Without
+          # them, refresh returns last_error and analytics_token_failure
+          # fires on the next analyze pass.
+          GA4_GSC_CLIENT_ID:     ${{ secrets.GA4_GSC_CLIENT_ID }}
+          GA4_GSC_CLIENT_SECRET: ${{ secrets.GA4_GSC_CLIENT_SECRET }}
+          # The pipeline writes to projects/fleet_monitoring/data/ — the
+          # GHA runner's filesystem is ephemeral, that's fine. push_to_r2
+          # in the finally: block uploads everything back.
+        run: |
+          # --no-probes skips bot probes (only useful when an operator is
+          # watching in real time). Pipeline always runs full — no shortcuts
+          # that drop data. Refresh button just reloads the dashboard;
+          # only the cron schedule + explicit /trigger-run dispatches this.
+          python -m projects.fleet_monitoring.run --no-probes
+        # Don't fail the GHA step on a pipeline failure — push_to_r2 in
+        # the finally: block must still upload the run-log entry that
+        # records what broke. analytics_token_failure rule then surfaces
+        # it on the next analyze.
+        continue-on-error: true
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f projects/fleet_monitoring/data/run-log.jsonl ]; then
+            tail -1 projects/fleet_monitoring/data/run-log.jsonl | python -m json.tool || true
+          else
+            echo "No run-log written — pipeline failed before instrumentation."
+          fi

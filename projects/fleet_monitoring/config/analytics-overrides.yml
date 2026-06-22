@@ -1,0 +1,11 @@
+# projects/fleet_monitoring/config/analytics-overrides.yml
+# Hand-edited overrides for apex -> GA4 property_id / GSC site_url.
+# The mapping module first tries to auto-derive from meta.properties /
+# meta.sites; entries here force a specific value when the auto-match is
+# wrong or missing.
+#
+# Fields:
+#   apex             Required. The apex domain in the roster.
+#   ga4_property_id  Force this GA4 property for this apex.
+#   gsc_site_url     Force this GSC site_url for this apex.
+overrides: []

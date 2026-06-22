@@ -1,0 +1,85 @@
+# O2O standards — all CF audit/verify skills reference this file
+
+o2o_base: &o2o_base
+  ssl: strict
+  always_use_https: "on"
+  security_header:
+    enabled: true
+    max_age: 31536000
+  rocket_loader: "off"
+  early_hints: "on"
+  automatic_platform_optimization:
+    enabled: false
+  minify:
+    css: "off"
+    html: "off"
+    js: "off"
+  smart_tiered_cache: "on"
+  cache_rule_required: true
+
+o2o_lite:
+  <<: *o2o_base
+  waf_challenge_rule_required: false
+
+o2o_full:
+  <<: *o2o_base
+  waf_challenge_rule_required: true
+  challenge_expression: '(ip.src.country ne "US" and not cf.client.bot)'
+  challenge_action: managed_challenge
+  waf_validator_allowlist_required: true
+
+# Validator/crawler allowlist — Skip rule that lets Schema.org, Google Rich Results,
+# PageSpeed, and social media previewers past the country challenge without
+# bypassing managed WAF. Applied before the country challenge rule.
+waf_validator_allowlist:
+  description: "NKP: validator + crawler allowlist"
+  action: skip
+  action_parameters:
+    ruleset: current
+    phases:
+      - http_request_sbfm
+  user_agents:
+    # Validators + performance tools
+    - Google-InspectionTool
+    - Schema-Markup-Validator
+    - Chrome-Lighthouse
+    - PageSpeed
+    # Social media previewers
+    - facebookexternalhit
+    - LinkedInBot
+    - Slackbot-LinkExpanding
+    - Twitterbot
+    - Discordbot
+    # AI search crawlers (GEO)
+    - ClaudeBot
+    - anthropic-ai
+    - ChatGPT-User
+    - GPTBot
+    - PerplexityBot
+    - Google-Extended
+
+# AI search project — applied independently of O2O. Lets known AI search bots
+# in for citation (ChatGPT, Claude, Perplexity, AI Overviews) while blocking
+# unknown / non-allowlisted AI scrapers that eat bandwidth. Composer skill:
+# cloudflare.setup_ai_search.
+ai_search:
+  bot_management:
+    ai_bots_protection: block        # /zones/{id}/bot_management PUT
+    crawler_protection: enabled      # NB: enabled (not 'block') per CF SBFM API
+  allowlist_required: true           # uses waf_validator_allowlist above
+  ruleset_bootstrap_required: true   # http_request_firewall_custom must exist
+
+dns_requirements:
+  www_record:
+    type: CNAME
+    content: wp.wpenginepowered.com
+    proxied: true
+
+divi_cache_exclusions:
+  - 'http.request.uri.query contains "et_fb"'
+  - 'http.request.uri.query contains "et_bfb"'
+  - 'http.request.uri.query contains "et_pb_preview"'
+
+wp_cache_exclusions:
+  - 'starts_with(http.request.uri.path, "/wp-")'
+  - 'http.cookie contains "wordpress_logged_in"'
