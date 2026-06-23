@@ -74,6 +74,20 @@ def list_accounts() -> list[dict]:
             for a in data.get("results", []) if a.get("id")]
 
 
+def get_account_limits(account_id: str) -> dict | None:
+    """Return `{visitors, storage, bandwidth}` for the account, or None on error.
+
+    The values are the contracted PLAN caps (not current usage). `bandwidth`
+    + `storage` are integers in GB. `visitors` is an int visit count;
+    `null` from the API means unlimited (the portal renders this as
+    "999,999,999"). Same Basic-auth credentials as the rest of the module.
+
+    Endpoint: `/accounts/{id}/limits`. This was missed on the first probe
+    of the API — see `reference_wpe_plan_caps_portal_only` in memory.
+    """
+    return _wpe_get(f"/accounts/{account_id}/limits")
+
+
 def parse_usage_rollup(usage: dict | None) -> dict | None:
     """Reduce a /usage response to the metrics we store. None if no rollup present."""
     if not usage or "metrics_rollup" not in usage:

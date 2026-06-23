@@ -41,10 +41,9 @@ def analyze_snapshot(current: dict, history_snaps: list[dict],
     """Run rules over `current`. Returns (enriched_snapshot, alerts_with_states).
 
     `history_snaps` are PRIOR snapshots only (current excluded).
-    `current_run_stages` is the IN-FLIGHT pipeline stages — passed to
-    evaluate_analytics_health so the fleet-level token-failure rule sees
-    failures that happened EARLIER in this same run, not just yesterday's
-    failures from the disk run-log.
+    `current_run_stages` — when called from run.py, the in-flight stages list
+    threaded into evaluate_analytics_health so it sees THIS run's failures
+    instead of yesterday's on-disk run-log entry.
     """
     histories = build_histories(history_snaps)
     rule_changes = load_rule_changes()
@@ -60,14 +59,11 @@ def analyze_snapshot(current: dict, history_snaps: list[dict],
     except ValueError:
         today = date.today()
     all_alerts.extend(evaluate_plan_utilization(
-        today, load_plans(), read_daily_all()))
+        today, load_plans(fetch_live_limits=True), read_daily_all()))
 
-    # Fleet-level: surface any analytics pull source that failed. Reads
-    # current_run_stages when available (run.py path) so the rule catches
-    # THIS run's failures. Falls back to disk run-log for ad-hoc analyze
-    # runs (e.g. `python -m projects.fleet_monitoring.run --analyze`).
-    all_alerts.extend(evaluate_analytics_health(
-        current_stages=current_run_stages))
+    # Fleet-level: surface any analytics pull source that failed in the
+    # most recent run-log entry. Token expiry is silent otherwise.
+    all_alerts.extend(evaluate_analytics_health(current_stages=current_run_stages))
 
     all_alerts = assign_states(all_alerts, previous_alerts)
     all_alerts = apply_mutes(all_alerts, mute_entries)
@@ -100,12 +96,12 @@ def write_drift_drafts(snapshot: dict, path=INTERVENTIONS_FILE) -> int:
 
 
 def analyze(current_run_stages: list[dict] | None = None) -> tuple[dict, list]:
-    """Load all snapshots, analyze the latest, write results back. Returns (snapshot, alerts).
+    """Load all snapshots, analyze the latest, write results back.
 
-    `current_run_stages` flows through to evaluate_analytics_health so the
-    fleet-level token-failure rule sees this run's failures (chicken-and-
-    egg fix — without this, the rule only sees yesterday's failures from
-    the on-disk run-log).
+    `current_run_stages` (optional) — when run.py is the caller, the in-flight
+    stages list so analytics_health sees THIS run's pull failures (chicken-
+    and-egg fix). Standalone `python -m analyze` invocations omit it and
+    fall back to the on-disk run-log.
     """
     snapshots = load_snapshots()
     if not snapshots:

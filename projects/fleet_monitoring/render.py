@@ -965,7 +965,7 @@ def _alerts_trend_line(timeseries_rows: list[dict]) -> str:
 def _overview_tab(snapshot: dict, timeseries_rows: list[dict]) -> str:
     plan_html = _plan_utilization_panel(
         today=_date.today(),
-        plans=load_plans(),
+        plans=load_plans(fetch_live_limits=True),
         daily_rows=read_daily_all(),
         snapshot=snapshot,
     )
