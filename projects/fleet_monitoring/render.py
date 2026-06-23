@@ -995,6 +995,103 @@ def _alerts_trend_line(timeseries_rows: list[dict]) -> str:
     </section>"""
 
 
+def _top_5xx_sites(snapshot: dict, n: int = 5) -> list[dict]:
+    """Top-N sites by edge-5xx rate over the last 7 days, with the same volume
+    floors the alert engine uses (MIN_REQUESTS_7D=1000, MIN_5XX_EVENTS=10).
+
+    Why floors: a 50-request site that returned 1 error is at 2% but means
+    nothing; a 5000-request site at 2% means real users hit real failures.
+    Mirroring the rule's floors keeps the panel and the alert engine in
+    agreement about who counts as a real offender.
+
+    Returns rows sorted by pct desc, ready for the Overview panel.
+    """
+    from .rules.edge_5xx_rate import MIN_REQUESTS_7D, MIN_5XX_EVENTS
+    rows = []
+    for s in snapshot.get("sites", []):
+        cf_an = (s.get("cf") or {}).get("analytics") or {}
+        pct = cf_an.get("pct_5xx_7d")
+        req = cf_an.get("requests_7d") or 0
+        err = cf_an.get("requests_5xx_7d") or 0
+        if (pct is None or req < MIN_REQUESTS_7D
+                or err < MIN_5XX_EVENTS):
+            continue
+        rows.append({
+            "key": s["key"],
+            "pct": pct,
+            "errors": err,
+            "requests": req,
+            "top_codes": cf_an.get("top_status_codes_7d") or [],
+        })
+    rows.sort(key=lambda r: r["pct"], reverse=True)
+    return rows[:n]
+
+
+def _top_5xx_card(snapshot: dict) -> str:
+    """Compact Overview panel — worst 5 sites by edge-5xx rate over 7d.
+
+    Severity colour matches the alert engine's thresholds (1% warn, 3% crit)
+    so an operator reading the panel and an operator reading the alert see
+    the same story. Each row links straight to the site's detail page.
+    """
+    from .rules.edge_5xx_rate import WARN_PCT, CRIT_PCT
+    top = _top_5xx_sites(snapshot, n=5)
+    if not top:
+        return ('<section class="panel">'
+                '<div class="panel-head"><h2>Top 5xx offenders &middot; last 7d</h2></div>'
+                '<p class="muted">No sites cleared the volume floor '
+                '(1,000+ requests AND 10+ 5xx events in the last 7 days). '
+                'Either the fleet is healthy or traffic is too sparse to '
+                'measure — try again after more data.</p></section>')
+
+    rows_html = []
+    for r in top:
+        if r["pct"] >= CRIT_PCT:
+            cls = "sev-critical"
+        elif r["pct"] >= WARN_PCT:
+            cls = "sev-warning"
+        else:
+            cls = "sev-good"
+        # Top 3 status codes as a small inline breakdown, e.g. "504=17k 521=1.4k"
+        only5xx = [c for c in r["top_codes"]
+                   if 500 <= c.get("code", 0) < 600][:3]
+        codes_inline = " ".join(
+            f'<span class="code-tag">{c["code"]}={_compact_num(c["requests"])}</span>'
+            for c in only5xx) or '<span class="muted">no breakdown</span>'
+        rows_html.append(
+            f'<li class="t5-row">'
+            f'<a class="t5-site" href="sites/{_safe_key(r["key"])}.html">'
+            f'{_esc(r["key"])}</a>'
+            f'<span class="t5-pct {cls}">{r["pct"]:.2f}%</span>'
+            f'<span class="t5-count muted">'
+            f'{_compact_num(r["errors"])}/{_compact_num(r["requests"])} req</span>'
+            f'<span class="t5-codes">{codes_inline}</span>'
+            f'</li>')
+
+    return f'''
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Top 5xx offenders &middot; last 7d</h2>
+        <span class="muted" style="font-size:11.5px">
+          edge errors (incl. CF gateway 5xx) &middot;
+          floor 1k req + 10 errors &middot;
+          warn at {WARN_PCT}%, critical at {CRIT_PCT}%
+        </span>
+      </div>
+      <ul class="t5-list">{"".join(rows_html)}</ul>
+    </section>'''
+
+
+def _compact_num(n: float | int) -> str:
+    """Format a count for tight panel cells: 1500 -> '1.5k', 17753 -> '17.8k'."""
+    n = float(n)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return f"{int(n)}"
+
+
 def _overview_tab(snapshot: dict, timeseries_rows: list[dict]) -> str:
     plan_html = _plan_utilization_panel(
         today=_date.today(),
@@ -1006,6 +1103,7 @@ def _overview_tab(snapshot: dict, timeseries_rows: list[dict]) -> str:
       {_stat_cards(snapshot, timeseries_rows)}
       {_cf_cost_summary(snapshot)}
       {plan_html}
+      {_top_5xx_card(snapshot)}
       <div class="grid-2-1">
         {_bandwidth_chart(timeseries_rows)}
         {_top_sites_card(snapshot)}
@@ -1088,6 +1186,7 @@ def _latest_storage_gb(wpe: dict) -> float | None:
 
 
 def _sites_tab(snapshot: dict) -> str:
+    from .rules.edge_5xx_rate import WARN_PCT as _5XX_WARN, CRIT_PCT as _5XX_CRIT
     rows = []
     for s in sorted(snapshot.get("sites", []),
                     key=lambda s: -((s.get("wpe") or {}).get("bandwidth_gb_30d") or 0)):
@@ -1099,6 +1198,27 @@ def _sites_tab(snapshot: dict) -> str:
         account = wpe.get("account_name") or wpe.get("account") or "—"
         storage_gb = _latest_storage_gb(wpe)
         storage_cell = f"{storage_gb:.1f}" if storage_gb is not None else "—"
+        # 5xx column — coloured pill matches the alert engine's thresholds.
+        # title= attribute carries the top 5xx codes for hover-detail, so the
+        # operator can spot 504 (origin timeout) vs 521 (origin unreachable)
+        # without clicking through to the per-site page.
+        pct_5xx = cf_an.get("pct_5xx_7d")
+        if pct_5xx is None:
+            err_cell = '<td class="num muted">—</td>'
+        else:
+            if pct_5xx >= _5XX_CRIT:
+                cls_5xx = "sev-critical"
+            elif pct_5xx >= _5XX_WARN:
+                cls_5xx = "sev-warning"
+            else:
+                cls_5xx = ""
+            only5xx = [c for c in (cf_an.get("top_status_codes_7d") or [])
+                       if 500 <= c.get("code", 0) < 600][:3]
+            tip = (", ".join(f'{c["code"]}={c["requests"]:,}'
+                             for c in only5xx)
+                   or f'{cf_an.get("requests_5xx_7d", 0):,} errors')
+            err_cell = (f'<td class="num"><span class="cell-pill {cls_5xx}" '
+                        f'title="{_esc(tip)}">{pct_5xx:.2f}%</span></td>')
         rows.append(
             f'<tr><td class="site"><a href="sites/{_safe_key(s["key"])}.html" '
             f'class="site-link">{_esc(s["key"])}</a></td>'
@@ -1109,6 +1229,7 @@ def _sites_tab(snapshot: dict) -> str:
             f'<td class="num">{_esc(wpe.get("billable_visits_30d", "—"))}</td>'
             f'<td class="num">{_esc(cf_an.get("cache_hit_rate", "—"))}</td>'
             f'<td class="num">{_esc(cf_an.get("threats", "—"))}</td>'
+            f'{err_cell}'
             f'<td class="join">{_esc(s.get("join_state", "—"))}</td>'
             f'<td class="num">{badge}</td></tr>')
     return f"""
@@ -1123,11 +1244,12 @@ def _sites_tab(snapshot: dict) -> str:
         <th>Site</th><th>Account</th><th class="num">BW GB</th>
         <th class="num">Storage GB</th><th class="num">MB/v</th>
         <th class="num">Visits</th><th class="num">Cache %</th><th class="num">Threats</th>
+        <th class="num" title="Edge 5xx rate over last 7 days (incl. CF gateway 5xx)">5xx %</th>
         <th>Join</th><th class="num">Alerts</th>
       </tr></thead><tbody>{"".join(rows)}</tbody></table>
       </div>
       <p class="muted">{len(rows)} sites &middot; click a column header to sort &middot;
-        type to filter</p>
+        type to filter &middot; hover 5xx % for top status codes</p>
     </section>"""
 
 
@@ -1797,6 +1919,29 @@ main.shell{padding:18px 28px 56px;max-width:1280px;margin:0 auto}
 .sev-pill.sev-critical{background:var(--crit)}
 .sev-pill.sev-warning{background:var(--warn)}
 .sev-pill.sev-info{background:var(--info)}
+/* ---------- Top 5xx offenders panel ---------- */
+.t5-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.t5-row{display:grid;grid-template-columns:minmax(140px,1.4fr) 64px 130px 1fr;
+  align-items:center;gap:12px;padding:8px 10px;border-radius:8px;
+  background:#f9fafb;border:1px solid #eef0f3;font-size:13px}
+.t5-site{font-weight:600;color:var(--ink);text-decoration:none;font-size:13.5px}
+.t5-site:hover{text-decoration:underline}
+.t5-pct{font-weight:700;font-family:var(--font-mono);text-align:right;
+  padding:2px 8px;border-radius:6px;color:#fff;background:#94a3b8}
+.t5-pct.sev-warning{background:var(--warn)}
+.t5-pct.sev-critical{background:var(--crit)}
+.t5-pct.sev-good{background:#94a3b8}
+.t5-count{font-family:var(--font-mono);font-size:11.5px}
+.t5-codes{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.code-tag{font-family:var(--font-mono);font-size:11px;padding:1px 6px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:4px;color:var(--ink-2)}
+
+/* ---------- inline cell-pill for sortable table cells (5xx %, etc.) ---------- */
+.cell-pill{display:inline-block;padding:2px 7px;border-radius:6px;
+  font-weight:600;font-family:var(--font-mono);font-size:11.5px}
+.cell-pill.sev-warning{background:var(--warn);color:#fff}
+.cell-pill.sev-critical{background:var(--crit);color:#fff}
+
 .sev-pill.r2h-needs_resync{background:var(--crit)}
 .sev-pill.r2h-scan_failed{background:#7a5a05}
 .sev-pill.r2h-no_recent_upload{background:#9ca3af;color:#1f2937}
