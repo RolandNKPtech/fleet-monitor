@@ -10,16 +10,16 @@ def _daily(account, date_str, total_bytes, billable=0):
 
 
 def test_panel_shows_configured_account_with_pct_and_projection():
-    plans = {"acctF": AccountPlan(cycle_start_day=13,
+    plans = {"nkpmedical6": AccountPlan(cycle_start_day=13,
                                           bandwidth_gb_limit=1700)}
-    daily = [_daily("acctF", "2026-05-13", 100_000_000_000),
-             _daily("acctF", "2026-05-14", 100_000_000_000),
-             _daily("acctF", "2026-05-19", 87_000_000_000)]
+    daily = [_daily("nkpmedical6", "2026-05-13", 100_000_000_000),
+             _daily("nkpmedical6", "2026-05-14", 100_000_000_000),
+             _daily("nkpmedical6", "2026-05-19", 87_000_000_000)]
     html = _plan_utilization_panel(today=date(2026, 5, 19),
                                    plans=plans, daily_rows=daily,
                                    snapshot={"sites": []})
     assert "Plan Utilization" in html
-    assert "acctF" in html
+    assert "nkpmedical6" in html
     assert "of 1,700 GB" in html               # the configured limit shows
     assert "% cycle-to-date" in html or "%" in html
     assert "cycle 2026-05-13" in html.lower()  # cycle window labeled
@@ -28,17 +28,17 @@ def test_panel_shows_configured_account_with_pct_and_projection():
 
 def test_panel_shows_unconfigured_account_with_call_to_action():
     """When plan limit is null, panel shows current GB but no % or projection."""
-    plans = {"acctD": AccountPlan()}
+    plans = {"nkpmedical4": AccountPlan()}
     daily = []
     html = _plan_utilization_panel(today=date(2026, 5, 19),
                                    plans=plans, daily_rows=daily,
                                    snapshot={"sites": [
-                                       {"wpe": {"account_name": "acctD",
+                                       {"wpe": {"account_name": "nkpmedical4",
                                                 "bandwidth_gb_30d": 956.0}}]})
-    assert "acctD" in html
+    assert "nkpmedical4" in html
     assert "not set" in html or "configure" in html.lower()
     assert "956" in html                      # current consumption surfaces
-    assert "%" not in html.split("not set")[0].split("acctD")[1]
+    assert "%" not in html.split("not set")[0].split("nkpmedical4")[1]
 
 
 def test_panel_renders_with_zero_accounts_configured():
@@ -50,29 +50,77 @@ def test_panel_renders_with_zero_accounts_configured():
     assert "wpe-plans.yml" in html.lower() or "configure" in html.lower()
 
 
+def test_panel_shows_cap_and_pct_when_only_cycle_start_day_missing():
+    """The auto-fetch path fills bandwidth_gb_limit from /accounts/{id}/limits
+    even when the operator hasn't entered cycle_start_day yet. The panel must
+    surface the cap + rolling-vs-cap % so the operator sees immediate value
+    from auto-fetch instead of a useless 'plan limit not set' placeholder.
+
+    Cycle math (% of cycle elapsed, projection, overage $) still requires
+    cycle_start_day — the row stays in plan-row-unset state and footer
+    instructs the operator to add it."""
+    plan = AccountPlan(cycle_start_day=None,
+                       bandwidth_gb_limit=1000,
+                       display_label="nkpmedical1",
+                       real_account_names=["nkpmedical1"])
+    plans = {"nkpmedical1": plan}
+    snap = {"sites": [{"wpe": {"account_name": "nkpmedical1",
+                                "bandwidth_gb_30d": 674.0}}]}
+    html = _plan_utilization_panel(today=date(2026, 6, 23),
+                                   plans=plans, daily_rows=[],
+                                   snapshot=snap)
+    # Visible cap + computed rolling-vs-cap %.
+    assert "1,000 GB plan" in html
+    assert "67%" in html
+    # Footer still instructs the operator to add cycle_start_day.
+    assert "cycle_start_day" in html
+    # But the misleading "plan limit not set" must be gone for this row.
+    assert "plan limit not set" not in html
+
+
+def test_panel_falls_back_to_old_unset_label_when_neither_field_set():
+    """When the auto-fetch ALSO fails (e.g. WPE API outage during analyze
+    AND no YAML override), the row must still render with the original
+    'plan limit not set' guidance so the operator knows it's missing."""
+    plan = AccountPlan(cycle_start_day=None,
+                       bandwidth_gb_limit=None,
+                       display_label="acctZ",
+                       real_account_names=["acctZ"])
+    plans = {"acctZ": plan}
+    snap = {"sites": [{"wpe": {"account_name": "acctZ",
+                                "bandwidth_gb_30d": 50.0}}]}
+    html = _plan_utilization_panel(today=date(2026, 6, 23),
+                                   plans=plans, daily_rows=[],
+                                   snapshot=snap)
+    assert "plan limit not set" in html
+    assert "acctZ" in html
+
+
 def test_panel_shows_real_account_name_not_sanitized_alias():
-    """An aliased plan (acctA -> realacct) must render the REAL WPE
+    """An aliased plan (acctA -> nkpmedical1) must render the REAL WPE
     account name as the card title. The alias exists only to keep the
     public source repo client-free; operators need the real name on the
     rendered dashboard so they can match a card to the actual WPE billing
     portal / SSH host.
 
     Regression guard: this is exactly the "what server is acctA?" confusion
-    the operator hit on the live dashboard."""
+    that the operator hit on the live dashboard 2026-06-22."""
     plan = AccountPlan(display_label="acctA",
-                       real_account_names=["realacct"])
+                       real_account_names=["nkpmedical1"])
     # Same plan registered under both keys, as load_plans() does.
-    plans = {"acctA": plan, "realacct": plan}
+    plans = {"acctA": plan, "nkpmedical1": plan}
     html = _plan_utilization_panel(today=date(2026, 5, 19),
                                    plans=plans, daily_rows=[],
                                    snapshot={"sites": [
-                                       {"wpe": {"account_name": "realacct",
+                                       {"wpe": {"account_name": "nkpmedical1",
                                                 "bandwidth_gb_30d": 674.0}}]})
     # The real name appears in the card title.
-    assert ">realacct<" in html
-    # The sanitized alias must NOT appear as a card title.
+    assert ">nkpmedical1<" in html
+    # The sanitized alias must NOT appear as a card title — it would
+    # confuse the operator about which physical server they're looking at.
     assert ">acctA<" not in html
-    # The current 30-day rolling still shows (rolling-by-account join uses alias).
+    # The current 30-day rolling still shows because the rolling-by-account
+    # join routes through the alias.
     assert "674" in html
 
 

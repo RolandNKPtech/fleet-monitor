@@ -610,25 +610,58 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
 
         if not account_is_configured(plan):
             summary_unconfigured += 1
+            # Partial-config case: when bandwidth_gb_limit IS known (typically
+            # auto-fetched from /accounts/{id}/limits) but cycle_start_day is
+            # still null, surface the cap + rolling-vs-cap progress so the
+            # operator gets immediate value from the auto-fetch. The cycle
+            # math (% of cycle elapsed, projection, overage $) still needs
+            # cycle_start_day, so we label this clearly as "approximate".
+            cap = plan.bandwidth_gb_limit
             rolling_html = (
                 f'<span class="row-num">{rolling:,.0f} <small>GB</small></span>'
                 if rolling is not None else
                 '<span class="row-num muted">&mdash;</span>')
+            if cap and rolling is not None:
+                pct = (rolling / float(cap)) * 100
+                bar_pct = min(pct, 100)
+                head_state = (f'rolling 30d &middot; '
+                              f'<strong>{pct:.0f}%</strong> of plan')
+                body_extra = (
+                    f'<div class="plan-bar-track">'
+                    f'<span class="plan-bar-fill" style="width:{bar_pct:.1f}%"></span>'
+                    f'</div>'
+                    f'<div class="plan-row-body">'
+                    f'<span>rolling 30d <strong>{rolling:,.0f}</strong> of '
+                    f'{cap:,.0f} GB plan</span>'
+                    f'<span class="muted">&middot; auto-fetched from '
+                    f'<code>/accounts/{{id}}/limits</code></span></div>')
+                foot = (f'<span>add <code>cycle_start_day</code> in '
+                        f'<code>config/wpe-plans.yml</code> for '
+                        f'cycle-accurate % + projection</span>')
+            elif cap:
+                head_state = f'{cap:,.0f} GB plan &middot; awaiting data'
+                body_extra = (f'<div class="plan-row-body">'
+                              f'<span class="muted">current 30-day rolling</span>'
+                              f'{rolling_html}</div>')
+                foot = (f'<span>add <code>cycle_start_day</code> in '
+                        f'<code>config/wpe-plans.yml</code> for cycle math</span>')
+            else:
+                head_state = '<span class="muted">plan limit not set</span>'
+                body_extra = (f'<div class="plan-row-body">'
+                              f'<span class="muted">current 30-day rolling</span>'
+                              f'{rolling_html}</div>')
+                foot = (f'<span>source: WPE /installs/usage (rolling 30d)</span>'
+                        f'<span>[add <code>cycle_start_day</code> + '
+                        f'<code>bandwidth_gb_limit</code> in '
+                        f'<code>config/wpe-plans.yml</code>]</span>')
             rows.append(f"""
             <div class="plan-row plan-row-unset">
               <div class="plan-row-head">
                 <span class="plan-account">{_esc(lookup)}</span>
-                <span class="plan-state muted">plan limit not set</span>
+                <span class="plan-state">{head_state}</span>
               </div>
-              <div class="plan-row-body">
-                <span class="muted">current 30-day rolling</span>
-                {rolling_html}
-              </div>
-              <div class="plan-row-foot muted">
-                <span>source: WPE /installs/usage (rolling 30d)</span>
-                <span>[add <code>cycle_start_day</code> + <code>bandwidth_gb_limit</code>
-                  in <code>config/wpe-plans.yml</code>]</span>
-              </div>
+              {body_extra}
+              <div class="plan-row-foot muted">{foot}</div>
             </div>""")
             continue
 
