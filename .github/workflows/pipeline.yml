@@ -64,6 +64,29 @@ jobs:
           # container, but mandatory for the pipeline runner).
           pip install google-analytics-data google-auth-oauthlib \
                       google-api-python-client
+          # r2_health_scan stage SSHs into WPE installs to probe for broken
+          # thumbnails (server-side WP scan via paramiko).
+          pip install paramiko
+
+      - name: Setup WPE SSH key
+        # Write the key contents from the GHA secret into the default path
+        # WPESSHClient looks for. When the secret isn't set, the
+        # r2_health_scan stage detects the missing key and skips itself
+        # (failure-isolated — the rest of the pipeline still runs).
+        env:
+          WPE_SSH_KEY: ${{ secrets.WPE_SSH_KEY }}
+        run: |
+          if [ -n "$WPE_SSH_KEY" ]; then
+            mkdir -p ~/.ssh
+            printf '%s\n' "$WPE_SSH_KEY" > ~/.ssh/wpengine_ed25519
+            chmod 600 ~/.ssh/wpengine_ed25519
+            # Pre-populate known_hosts so SSH doesn't hang on host-key
+            # prompts during the first connection per install.
+            ssh-keyscan -H ssh.wpengine.net >> ~/.ssh/known_hosts 2>/dev/null || true
+            echo "WPE SSH key installed at ~/.ssh/wpengine_ed25519"
+          else
+            echo "WPE_SSH_KEY secret not set — r2_health_scan stage will skip"
+          fi
 
       - name: Run pipeline
         env:

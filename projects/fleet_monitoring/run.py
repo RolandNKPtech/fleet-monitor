@@ -26,12 +26,14 @@ _load_dotenv(_RootPath(__file__).resolve().parents[2] / ".env")
 import argparse
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
 from contextlib import contextmanager
 from datetime import date as _date
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .models import RUN_LOG_FILE, FLEET_DB
 from . import collect as collect_mod
@@ -176,6 +178,41 @@ def _pull_analytics_lake() -> list[dict]:
     return results
 
 
+def _run_r2_health_scan() -> None:
+    """SSH-probe every R2-offloaded install for broken thumbnails.
+
+    Calls scripts.monitor_r2_health.scan_all + writes results into the
+    r2-health/ tree (round-tripped to R2 via the inventory entry, so the
+    dashboard's R2 Health tab picks up the fresh scan on the next render).
+
+    Failure-isolated:
+      - When WPE SSH key is missing (no WPE_SSH_KEY_PATH + no default key
+        file), the scan is skipped with a stderr note instead of crashing
+        the pipeline. The dashboard then shows the last successful scan.
+      - Per-install SSH errors stay isolated inside scan_one (recorded in
+        the per-site result as status=error, scan never aborts).
+    """
+    key_path = os.environ.get(
+        "WPE_SSH_KEY_PATH",
+        str(Path.home() / ".ssh" / "wpengine_ed25519"))
+    if not Path(key_path).exists():
+        print(f"r2_health_scan skipped: no WPE SSH key at {key_path} "
+              f"(set WPE_SSH_KEY_PATH or place key at default location)",
+              file=sys.stderr)
+        return
+    try:
+        from scripts.monitor_r2_health import scan_all, write_payload
+        payload = asyncio.run(scan_all(days=30, concurrency=4, verbose=False))
+        write_payload(payload, push_to_r2=False)  # round-trip handles R2 push
+        t = payload["totals"]
+        print(f"  r2_health_scan: {t['sites_scanned']} ok, "
+              f"{t['sites_failed']} failed, "
+              f"{t['total_broken']} broken across "
+              f"{t['sites_with_broken']} site(s)")
+    except Exception as e:                                  # pragma: no cover
+        print(f"r2_health_scan failed: {type(e).__name__}: {e}", file=sys.stderr)
+
+
 def sync_fleet_db(db_path=FLEET_DB, *, snapshots, daily_rows, interventions,
                   today) -> None:
     """Rebuild fleet.db and recompute effectiveness. Failure-isolated —
@@ -217,6 +254,12 @@ def main():
                 analytics_sub.extend(_pull_analytics_lake())
             with _stage("collect", stages):
                 asyncio.run(collect_mod.collect(run_probes=not args.no_probes))
+            # R2 health: SSH-probe every R2-offloaded install for broken
+            # thumbnails. Failure-isolated — SSH-key issues during a GHA run
+            # must never abort the pipeline. The R2 Health dashboard tab then
+            # shows yesterday's scan (whatever last successfully pushed).
+            with _stage("r2_health_scan", stages):
+                _run_r2_health_scan()
 
         if do_all or args.analyze:
             with _stage("analyze", stages):
