@@ -143,8 +143,56 @@ def test_sites_tab_5xx_cell_carries_top_codes_in_title_tooltip():
     }]}
     html = _sites_tab(snap)
     assert "cell-pill sev-critical" in html  # 4% > CRIT_PCT of 3%
-    # Title carries the top 5xx breakdown.
-    assert 'title="504=250, 521=150"' in html
+    # Title carries volume context + top 5xx breakdown — operator gets the
+    # full "400 out of 10k requests; mostly 504s + some 521s" story without
+    # opening the per-site page.
+    assert "400/10,000 req in 7d" in html
+    assert "504=250" in html and "521=150" in html
+
+
+def test_sites_tab_5xx_cell_muted_when_below_volume_floor():
+    """A site with 1 request and 1 error is 100% mathematically but means
+    nothing — flagging it red drowns out the actually-broken sites. Mirror
+    the Top 5xx panel's floor logic so the column stays useful.
+
+    Regression guard: 25 cf-only zones in the live snapshot rendered as
+    'critical 100%' pills before this fix, drowning the 10 genuinely
+    broken sites visually."""
+    snap = {"sites": [{
+        "key": "parked.com",
+        "wpe": {"bandwidth_gb_30d": 0},
+        "cf": {"analytics": {
+            "requests_7d": 5,        # below MIN_REQUESTS_7D=1000
+            "requests_5xx_7d": 5,
+            "pct_5xx_7d": 100.0,
+            "top_status_codes_7d": [{"code": 525, "requests": 5}],
+        }},
+    }]}
+    html = _sites_tab(snap)
+    # The pill is rendered but in the muted (no-severity) form, not red.
+    assert "sev-critical" not in html
+    assert "sev-warning" not in html
+    # Tooltip explains WHY it's muted so the operator doesn't think the
+    # column is broken.
+    assert "low traffic" in html
+    assert "5/5 req in 7d" in html
+
+
+def test_sites_tab_5xx_cell_still_red_above_floor():
+    """Sanity: the floor only protects against noise; real-volume sites at
+    critical % still render red."""
+    snap = {"sites": [{
+        "key": "real.com",
+        "wpe": {"bandwidth_gb_30d": 100},
+        "cf": {"analytics": {
+            "requests_7d": 50_000,
+            "requests_5xx_7d": 2000,    # well above MIN_5XX_EVENTS=10
+            "pct_5xx_7d": 4.0,
+            "top_status_codes_7d": [{"code": 504, "requests": 2000}],
+        }},
+    }]}
+    html = _sites_tab(snap)
+    assert "cell-pill sev-critical" in html
 
 
 def test_compact_num_format():

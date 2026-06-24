@@ -1186,7 +1186,9 @@ def _latest_storage_gb(wpe: dict) -> float | None:
 
 
 def _sites_tab(snapshot: dict) -> str:
-    from .rules.edge_5xx_rate import WARN_PCT as _5XX_WARN, CRIT_PCT as _5XX_CRIT
+    from .rules.edge_5xx_rate import (
+        WARN_PCT as _5XX_WARN, CRIT_PCT as _5XX_CRIT,
+        MIN_REQUESTS_7D as _5XX_MIN_REQ, MIN_5XX_EVENTS as _5XX_MIN_ERR)
     rows = []
     for s in sorted(snapshot.get("sites", []),
                     key=lambda s: -((s.get("wpe") or {}).get("bandwidth_gb_30d") or 0)):
@@ -1198,13 +1200,24 @@ def _sites_tab(snapshot: dict) -> str:
         account = wpe.get("account_name") or wpe.get("account") or "—"
         storage_gb = _latest_storage_gb(wpe)
         storage_cell = f"{storage_gb:.1f}" if storage_gb is not None else "—"
-        # 5xx column — coloured pill matches the alert engine's thresholds.
-        # title= attribute carries the top 5xx codes for hover-detail, so the
-        # operator can spot 504 (origin timeout) vs 521 (origin unreachable)
-        # without clicking through to the per-site page.
+        # 5xx column — apply the same volume floors the alert engine + Top
+        # 5xx panel use. A 1-request site with 1 error is mathematically
+        # 100% but the figure is meaningless noise; flagging it red drowns
+        # out the actually-broken sites in the table. Below floor: render
+        # muted with a "low traffic" tooltip so the operator still sees the
+        # value but isn't alarmed.
         pct_5xx = cf_an.get("pct_5xx_7d")
+        req_7d = cf_an.get("requests_7d") or 0
+        err_7d = cf_an.get("requests_5xx_7d") or 0
         if pct_5xx is None:
             err_cell = '<td class="num muted">—</td>'
+        elif req_7d < _5XX_MIN_REQ or err_7d < _5XX_MIN_ERR:
+            # Below the volume floor — keep visible but neutralise the colour
+            # so it doesn't compete with real signal.
+            tip = (f'low traffic: {err_7d:,}/{req_7d:,} req in 7d '
+                   f'(floor {_5XX_MIN_REQ:,} req + {_5XX_MIN_ERR} err)')
+            err_cell = (f'<td class="num muted"><span class="cell-pill" '
+                        f'title="{_esc(tip)}">{pct_5xx:.2f}%</span></td>')
         else:
             if pct_5xx >= _5XX_CRIT:
                 cls_5xx = "sev-critical"
@@ -1214,9 +1227,9 @@ def _sites_tab(snapshot: dict) -> str:
                 cls_5xx = ""
             only5xx = [c for c in (cf_an.get("top_status_codes_7d") or [])
                        if 500 <= c.get("code", 0) < 600][:3]
-            tip = (", ".join(f'{c["code"]}={c["requests"]:,}'
-                             for c in only5xx)
-                   or f'{cf_an.get("requests_5xx_7d", 0):,} errors')
+            codes_str = (", ".join(f'{c["code"]}={c["requests"]:,}'
+                                   for c in only5xx) or "—")
+            tip = f'{err_7d:,}/{req_7d:,} req in 7d · codes: {codes_str}'
             err_cell = (f'<td class="num"><span class="cell-pill {cls_5xx}" '
                         f'title="{_esc(tip)}">{pct_5xx:.2f}%</span></td>')
         rows.append(
