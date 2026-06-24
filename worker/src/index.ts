@@ -75,36 +75,142 @@ function rewriteFreshness(html: string, ageMs: number): string {
 }
 
 /**
- * Injected onto the dashboard. Replaces the Refresh button's behaviour:
- * instead of POSTing to /refresh and polling for a 67-minute pipeline,
- * the button now just reloads the page so the operator sees whatever
- * the latest cron produced. Honest UX — "Refresh" actually refreshes
- * the view, doesn't lie about producing new data on the spot.
+ * Injected onto the dashboard. Does three jobs:
  *
- * Power users who genuinely want to fire a new pipeline run go to
- * /pipeline and use the "Trigger run" button there (with a clear
- * "~67 min" warning).
+ *   1. Polls /status every 30s and shows a live chip next to the freshness
+ *      pill: "running 14m" while a pipeline is in flight, hidden when idle,
+ *      "last run failed" when the last run errored. The operator no longer
+ *      has to ssh into GH Actions to know whether anything is happening.
+ *
+ *   2. Auto-reloads the page when a running pipeline transitions to
+ *      completed — so the operator sees fresh data without remembering
+ *      to click Reload an hour later.
+ *
+ *   3. Rebinds the Reload button to actually trigger a fresh pipeline run
+ *      (/trigger-run dispatch) after a confirmation, instead of just
+ *      reloading the browser. The status chip then takes over showing
+ *      progress until the new run lands.
+ *
+ * No external dependencies; runs in vanilla browser JS, ~110 lines.
  */
 const _REFRESH_REBIND_SCRIPT = `
+<style>
+.pill.status-chip{padding:4px 11px;border-radius:999px;font-size:12px;
+  font-weight:600;text-decoration:none;margin-right:6px;display:inline-block}
+.pill.status-chip.running{background:#fef3c7;color:#92400e;
+  border:1px solid #fde68a;animation:fm-pulse 2s ease-in-out infinite}
+.pill.status-chip.error{background:#fee2e2;color:#991b1b;
+  border:1px solid #fecaca}
+.pill.status-chip.completed{background:#dcfce7;color:#166534;
+  border:1px solid #bbf7d0}
+@keyframes fm-pulse{0%,100%{opacity:1}50%{opacity:.6}}
+</style>
 <script>
 (function(){
   var btn = document.getElementById('refresh-btn');
   if (!btn) return;
-  // Replace the baked-in onclick (which POSTed to /refresh + polled
-  // /status for ~67min) with a plain reload.
-  btn.onclick = function(e) {
-    if (e && e.preventDefault) e.preventDefault();
-    var label = btn.querySelector('.label');
-    if (label) label.textContent = 'Reloading...';
-    btn.disabled = true;
-    location.reload();
-  };
-  // Rename for honesty.
   var label = btn.querySelector('.label');
   if (label) label.textContent = 'Reload';
-  btn.title = 'Reload dashboard with latest data from R2. ' +
-              'Use /pipeline to trigger a new pipeline run.';
-  btn.classList.remove('refresh-error');
+  btn.title = 'Trigger a fresh pipeline run. Status chip shows progress; ' +
+              'dashboard auto-reloads when the run completes.';
+
+  // ---- Status chip: live pipeline state indicator ----
+  var freshPill = document.querySelector(
+    '.pill.fresh, .pill.aging, .pill.stale');
+  var chip = document.createElement('a');
+  chip.className = 'pill status-chip';
+  chip.style.display = 'none';
+  chip.href = '/pipeline';
+  if (freshPill && freshPill.parentNode) {
+    freshPill.parentNode.insertBefore(chip, freshPill);
+  }
+  var lastState = null;
+
+  function fmtElapsed(startedAt) {
+    if (!startedAt) return '';
+    var mins = (Date.now() - new Date(startedAt).getTime()) / 60000;
+    if (mins < 1) return '<1m';
+    if (mins < 60) return Math.round(mins) + 'm';
+    var h = Math.floor(mins / 60), m = Math.round(mins % 60);
+    return h + 'h' + (m ? m + 'm' : '');
+  }
+
+  function pollStatus() {
+    fetch('/status', {cache: 'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var state = d.state;
+        if (state === 'running') {
+          chip.style.display = '';
+          chip.classList.remove('error','completed');
+          chip.classList.add('running');
+          chip.textContent = 'running ' + fmtElapsed(d.started_at);
+          chip.title = 'Pipeline started ' + fmtElapsed(d.started_at) +
+                       ' ago (typical: 30-90 min). Click for /pipeline.';
+        } else if (state === 'error') {
+          chip.style.display = '';
+          chip.classList.remove('running','completed');
+          chip.classList.add('error');
+          chip.textContent = 'last run failed';
+          chip.title = (d.message || 'pipeline run failed') +
+                       ' — click for /pipeline';
+        } else if (state === 'completed') {
+          // Was running, now done — auto-reload so the operator sees the
+          // fresh dashboard without remembering to click. Brief 'done'
+          // pulse first so the transition is visible.
+          if (lastState === 'running') {
+            chip.style.display = '';
+            chip.classList.remove('running','error');
+            chip.classList.add('completed');
+            chip.textContent = 'done — reloading';
+            setTimeout(function(){ location.reload(); }, 1500);
+            return;
+          }
+          chip.style.display = 'none';
+        } else {
+          chip.style.display = 'none';
+        }
+        lastState = state;
+      })
+      .catch(function(){
+        // Network error / Worker hiccup — keep last visible state.
+      });
+  }
+
+  // ---- Reload button: trigger real pipeline dispatch ----
+  btn.onclick = function(e){
+    if (e && e.preventDefault) e.preventDefault();
+    if (!confirm('Trigger a fresh pipeline run? Takes 30-90 min. ' +
+                 'The dashboard will auto-update when it finishes.')) {
+      return;
+    }
+    if (label) label.textContent = 'triggering...';
+    btn.disabled = true;
+    fetch('/trigger-run', {method: 'POST'})
+      .then(function(r){ return r.json(); })
+      .then(function(body){
+        if (body.ok) {
+          if (label) label.textContent = 'queued';
+          pollStatus();  // immediate chip update
+        } else {
+          if (label) label.textContent = 'trigger failed';
+          alert('Failed to trigger: ' + (body.error || body.message || 'unknown'));
+        }
+      })
+      .catch(function(err){
+        if (label) label.textContent = 'trigger failed';
+        alert('Failed to trigger: ' + err.message);
+      })
+      .finally(function(){
+        setTimeout(function(){
+          btn.disabled = false;
+          if (label) label.textContent = 'Reload';
+        }, 3000);
+      });
+  };
+
+  pollStatus();
+  setInterval(pollStatus, 30000);
 })();
 </script>
 </body>`;
