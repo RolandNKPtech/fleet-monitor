@@ -27,6 +27,7 @@ class AccountPlan:
     bandwidth_gb_limit: float | None = None
     visits_limit: int | None = None
     overage_per_gb_usd: float | None = None
+    storage_gb_limit: float | None = None
     display_label: str = ""
     real_account_names: list[str] = field(default_factory=list)
 
@@ -72,6 +73,7 @@ def load_plans(*, fetch_live_limits: bool = False) -> dict[str, AccountPlan]:
             bandwidth_gb_limit=fields_dict.get("bandwidth_gb_limit"),
             visits_limit=fields_dict.get("visits_limit"),
             overage_per_gb_usd=fields_dict.get("overage_per_gb_usd"),
+            storage_gb_limit=fields_dict.get("storage_gb_limit"),
             display_label=name,
             real_account_names=real_names or [name],
         )
@@ -116,10 +118,11 @@ def _apply_live_limits(plans: dict[str, AccountPlan]) -> None:
         if id(plan) in seen:
             continue
         seen.add(id(plan))
-        # Skip the network call when both fields the API can fill are
+        # Skip the network call when every field the API can fill is
         # already populated from YAML.
         if (plan.bandwidth_gb_limit is not None
-                and plan.visits_limit is not None):
+                and plan.visits_limit is not None
+                and plan.storage_gb_limit is not None):
             continue
         for real_name in plan.real_account_names:
             acct_id = name_to_id.get(real_name)
@@ -135,6 +138,8 @@ def _apply_live_limits(plans: dict[str, AccountPlan]) -> None:
                 plan.bandwidth_gb_limit = float(limits["bandwidth"])
             if plan.visits_limit is None and limits.get("visitors"):
                 plan.visits_limit = int(limits["visitors"])
+            if plan.storage_gb_limit is None and limits.get("storage"):
+                plan.storage_gb_limit = float(limits["storage"])
             break  # first matching alias is enough
 
 

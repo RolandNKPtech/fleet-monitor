@@ -551,6 +551,38 @@ def _fleet_rollup(snapshot: dict, timeseries_rows: list[dict]) -> str:
     </section>"""
 
 
+def _storage_row(used_gb: float | None, cap_gb: float | None) -> str:
+    """Compact secondary progress bar for storage usage, rendered below the
+    bandwidth bar on each plan card.
+
+    Returns '' when either the cap or the usage is unknown — keeps the card
+    silent rather than guessing. Severity colours match the bandwidth bar's
+    80/95 thresholds so an operator reading both bars sees one mental model.
+    """
+    if cap_gb is None or used_gb is None or cap_gb <= 0:
+        return ""
+    pct = (used_gb / float(cap_gb)) * 100
+    bar_pct = min(pct, 100)
+    if pct >= 95:
+        cls = "sev-critical"
+    elif pct >= 80:
+        cls = "sev-warning"
+    else:
+        cls = ""
+    headroom = max(float(cap_gb) - used_gb, 0)
+    return (
+        f'<div class="plan-storage-row {cls}">'
+        f'<div class="plan-storage-head">'
+        f'<span class="muted">storage</span>'
+        f'<span><strong>{used_gb:,.0f}</strong> of {cap_gb:,.0f} GB '
+        f'&middot; <strong>{pct:.0f}%</strong> '
+        f'<span class="muted">&middot; headroom {headroom:,.0f} GB</span></span>'
+        f'</div>'
+        f'<div class="plan-bar-track plan-bar-track-sm">'
+        f'<span class="plan-bar-fill" style="width:{bar_pct:.1f}%"></span>'
+        f'</div></div>')
+
+
 def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
                             snapshot: dict) -> str:
     """Per-account plan utilization. Every value is source-labeled.
@@ -560,15 +592,27 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
     Unconfigured accounts get a placeholder row with current 30-day rolling
     consumption from the snapshot and a "configure to enable" CTA.
     """
-    # Build per-account current 30d rolling from the snapshot for the
-    # unconfigured fallback display.
+    # Build per-account current 30d rolling bandwidth + per-account total
+    # storage from the snapshot. Both flow through the alias-aware lookup
+    # below so cards keyed on a sanitized label still join to real-name data.
+    # Storage uses the pre-aggregated `wpe.storage_gb` field on the snapshot
+    # (a point-in-time level, not a cycle sum). Falls back to _latest_storage_gb
+    # for snapshots collected before that field was added.
     rolling_by_account: dict[str, float] = {}
+    storage_by_account: dict[str, float] = {}
     for s in snapshot.get("sites", []):
         wpe = s.get("wpe") or {}
         acct = wpe.get("account_name") or wpe.get("account")
+        if not acct:
+            continue
         bw = wpe.get("bandwidth_gb_30d")
-        if acct and bw is not None:
+        if bw is not None:
             rolling_by_account[acct] = rolling_by_account.get(acct, 0) + bw
+        storage = wpe.get("storage_gb")
+        if storage is None:
+            storage = _latest_storage_gb(wpe)
+        if storage is not None:
+            storage_by_account[acct] = storage_by_account.get(acct, 0) + storage
 
     if not plans and not rolling_by_account:
         return ('<section class="panel"><div class="panel-head">'
@@ -595,6 +639,10 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
     for raw, bw in rolling_by_account.items():
         label = label_of_key.get(raw, raw)
         rolling_by_label[label] = rolling_by_label.get(label, 0) + bw
+    storage_by_label: dict[str, float] = {}
+    for raw, st in storage_by_account.items():
+        label = label_of_key.get(raw, raw)
+        storage_by_label[label] = storage_by_label.get(label, 0) + st
 
     all_accounts = sorted(set(plans_by_label.keys()) | set(rolling_by_label.keys()))
     rows = []
@@ -607,6 +655,11 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
         # the YAML aliases this label, route the data lookup through the real
         # name; otherwise the label IS the real name (back-compat).
         lookup = primary_lookup_name(plan) if plan.real_account_names else account
+        # Storage row gets pre-rendered once so both branches below can splice
+        # it under their bandwidth content. Independent of cycle_start_day —
+        # storage is a current snapshot not a cycle metric.
+        storage_html = _storage_row(storage_by_label.get(account),
+                                    plan.storage_gb_limit)
 
         if not account_is_configured(plan):
             summary_unconfigured += 1
@@ -661,6 +714,7 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
                 <span class="plan-state">{head_state}</span>
               </div>
               {body_extra}
+              {storage_html}
               <div class="plan-row-foot muted">{foot}</div>
             </div>""")
             continue
@@ -735,6 +789,7 @@ def _plan_utilization_panel(today, plans: dict, daily_rows: list[dict],
             <span class="muted">&middot; {day_n} of {cycle_length} days into cycle</span>
             {cost_html}
           </div>
+          {storage_html}
           <div class="plan-row-foot muted">
             source: WPE /installs/usage ({data_days} of {day_n} day{"s" if day_n != 1 else ""} observed &middot; cycle {cycle_start.isoformat()} &rarr; {cycle_end.isoformat()}) &middot; limit from <code>wpe-plans.yml</code>
           </div>
@@ -1932,6 +1987,20 @@ main.shell{padding:18px 28px 56px;max-width:1280px;margin:0 auto}
 .sev-pill.sev-critical{background:var(--crit)}
 .sev-pill.sev-warning{background:var(--warn)}
 .sev-pill.sev-info{background:var(--info)}
+/* ---------- Storage secondary bar on plan cards ---------- */
+.plan-storage-row{margin:8px 0 0;padding-top:8px;
+  border-top:1px dashed #e5e7eb}
+.plan-storage-head{display:flex;justify-content:space-between;
+  font-size:12px;margin-bottom:4px}
+.plan-bar-track-sm{height:6px;background:#eef0f3;border-radius:3px;
+  overflow:hidden;position:relative}
+.plan-bar-track-sm .plan-bar-fill{height:100%;background:linear-gradient(
+  90deg,#84cc16,#a3e635);transition:width .3s}
+.plan-storage-row.sev-warning .plan-bar-track-sm .plan-bar-fill{
+  background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+.plan-storage-row.sev-critical .plan-bar-track-sm .plan-bar-fill{
+  background:linear-gradient(90deg,#dc2626,#ef4444)}
+
 /* ---------- Top 5xx offenders panel ---------- */
 .t5-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .t5-row{display:grid;grid-template-columns:minmax(140px,1.4fr) 64px 130px 1fr;
