@@ -82,17 +82,26 @@ _OAUTH_TOKEN_REMOTE = "auth/alltoken.json"
 
 def _r2_config() -> dict | None:
     """Read R2 connection config from env. Returns None if any field is
-    missing — caller then treats the sync as a local-only no-op."""
-    needed = ("R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
-              "R2_ACCOUNT_ID", "R2_BUCKET")
-    vals = {k: os.environ.get(k, "").strip() for k in needed}
-    if not all(vals.values()):
+    missing — caller then treats the sync as a local-only no-op.
+
+    `ACCT` is accepted as a fallback for `R2_ACCOUNT_ID` because the
+    operator's deploy env file uses that shorter name. Access/secret/bucket
+    have no fallbacks — the FLEET_-prefixed variants in some .env files
+    point at a DIFFERENT R2 scope (no write access to fleet-monitor) so
+    accepting them would silently bypass auth and surface as AccessDenied.
+    """
+    access = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    account = (os.environ.get("R2_ACCOUNT_ID", "").strip()
+               or os.environ.get("ACCT", "").strip())
+    bucket = os.environ.get("R2_BUCKET", "").strip() or "fleet-monitor"
+    if not (access and secret and account):
         return None
     return {
-        "access_key": vals["R2_ACCESS_KEY_ID"],
-        "secret_key": vals["R2_SECRET_ACCESS_KEY"],
-        "endpoint": f"https://{vals['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
-        "bucket": vals["R2_BUCKET"],
+        "access_key": access,
+        "secret_key": secret,
+        "endpoint": f"https://{account}.r2.cloudflarestorage.com",
+        "bucket": bucket,
     }
 
 
