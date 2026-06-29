@@ -48,6 +48,56 @@ def test_link_uses_safe_key_for_lowercasing_and_unsafe_chars():
     assert 'href="sites/plastic-surgery-north-.html"' in html
 
 
+def test_alert_row_shows_wpe_account_chip_when_snapshot_carries_it():
+    """Each alert row gets a small monospace chip showing which WPE server
+    the site lives on (nkpmedical1-6) so the operator can scan the panel
+    and immediately see 'is this on the box that's at capacity?' without
+    clicking through to the site page.
+
+    The chip is populated from snapshot.sites[].wpe.account_name keyed by
+    site_key. Sites without a wpe block (CF-only) just skip the chip."""
+    snap = {
+        "alerts": [_alert("plasticsurgerynorth.com", "cache_hit_low",
+                          severity="critical")],
+        "sites": [
+            {"key": "plasticsurgerynorth.com",
+             "wpe": {"account_name": "nkpmedical4"}},
+        ],
+    }
+    html = _needs_attention(snap)
+    assert '<span class="alert-account">nkpmedical4</span>' in html
+    # Chip appears BETWEEN the site link and the rule name so the read
+    # order is site -> server -> rule -> summary.
+    assert html.index("plasticsurgerynorth.com</a>") < html.index("nkpmedical4")
+    assert html.index("nkpmedical4") < html.index("cache_hit_low")
+
+
+def test_alert_row_omits_account_chip_for_cf_only_sites():
+    """Sites without a wpe block (CF-only zones) must NOT render an empty
+    chip — better to omit than to show 'unknown' which the operator would
+    misread as a data quality problem."""
+    snap = {
+        "alerts": [_alert("cfonly.com", "edge_5xx_rate")],
+        "sites": [{"key": "cfonly.com", "wpe": None}],
+    }
+    html = _needs_attention(snap)
+    assert "alert-account" not in html
+    assert "cfonly.com" in html
+
+
+def test_alert_row_omits_account_chip_for_fleet_level_alert():
+    """analytics_token_failure uses site_key='fleet' — no per-site mapping,
+    no chip. Stays consistent with the link-skip behaviour for the same
+    fleet-level alert class."""
+    snap = {
+        "alerts": [_alert("fleet", "analytics_token_failure",
+                          severity="critical")],
+        "sites": [],
+    }
+    html = _needs_attention(snap)
+    assert "alert-account" not in html
+
+
 def test_all_clear_path_unaffected():
     """When there are no NEW alerts, the all-clear state must still render
     cleanly — the link logic is inside the alerts loop and shouldn't leak."""

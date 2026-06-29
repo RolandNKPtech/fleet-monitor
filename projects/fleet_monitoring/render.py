@@ -457,6 +457,18 @@ def _needs_attention(snapshot: dict) -> str:
     total_new = len(new_alerts)
     shown = new_alerts[:8]
 
+    # Build site_key -> account_name lookup so each alert can show which
+    # WPE server (nkpmedical1-6) it lives on. Operator no longer has to
+    # click through to the site page to know "is this on the box that's
+    # at capacity?" CF-only sites and sites without a wpe block render
+    # without the chip rather than showing an empty placeholder.
+    site_to_account: dict[str, str] = {}
+    for s in snapshot.get("sites", []):
+        wpe = s.get("wpe") or {}
+        acct = wpe.get("account_name")
+        if acct:
+            site_to_account[s["key"]] = acct
+
     if shown:
         items = []
         for a in shown:
@@ -470,10 +482,16 @@ def _needs_attention(snapshot: dict) -> str:
                              f'{_esc(sk)}</a>')
             else:
                 site_html = f'<span class="alert-site">{_esc(sk or "fleet")}</span>'
+            # WPE server chip — only shown when this site has a wpe block
+            # in the snapshot. Fleet-level + CF-only sites skip it.
+            acct = site_to_account.get(sk)
+            account_html = (f'<span class="alert-account">{_esc(acct)}</span>'
+                            if acct else "")
             items.append(
                 f'<li class="alert sev-{_esc(a["severity"])}">'
                 f'<span class="sev-pill sev-{_esc(a["severity"])}">{_esc(a["severity"])}</span>'
                 f'{site_html}'
+                f'{account_html}'
                 f'<span class="alert-rule">{_esc(a["rule"])}</span>'
                 f'<span class="alert-summary">{_esc(a["summary"])}</span></li>')
         body = f'<ul class="alert-list">{"".join(items)}</ul>'
@@ -2037,6 +2055,9 @@ tr.r2h-warn td{background:#fafafa}
 tr.r2h-ok td{background:#f7fdf9}
 .alert-site{font-weight:600;color:var(--ink);text-decoration:none}
 a.alert-site:hover{text-decoration:underline;cursor:pointer}
+.alert-account{display:inline-block;padding:1px 7px;border-radius:4px;
+  background:#e0e7ff;color:#3730a3;font-family:var(--font-mono);
+  font-size:10.5px;font-weight:600;letter-spacing:.02em}
 .alert-rule{color:var(--muted);font-family:var(--font-mono);font-size:11.5px}
 .alert-summary{color:var(--ink-2)}
 .alert-more{padding-left:10px;margin:6px 0 0;font-size:12.5px}
